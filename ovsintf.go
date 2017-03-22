@@ -30,7 +30,7 @@ func (intf *OvsInterface) ReadFromDBRow(row *libovsdb.Row) error {
 			for key, opt := range value.(libovsdb.OvsMap).GoMap {
 				intf.Options[key.(string)] = opt.(string)
 			}
-		}
+               }
 	}
 	return nil
 }
@@ -64,6 +64,53 @@ func (client *ovsClient) AddPeerInterfaceOnPort(portname, peername string) error
 	intf["options"] = fmt.Sprintf("{peer=%s}", peername)
 
 	return client.addInterfaceOnPort(portname, intf)
+}
+
+func (client *ovsClient) FindStatisticsOnInterface(intfname string) (map[string]float64, error) {
+	condition := libovsdb.NewCondition("name", "==", intfname)
+	selectOp := libovsdb.Operation{
+		Op:      selectOperation,
+		Table:   interfaceTableName,
+		Where:   []interface{}{condition},
+		Columns: []string{"statistics"},
+	}
+	operations := []libovsdb.Operation{selectOp}
+	reply, _ := client.dbClient.Transact(defaultOvsDB, operations...)
+	if len(reply) < len(operations) {
+		return nil, fmt.Errorf("Get statistics from interface failed due to Number of Replies should be at least equal to number of Operations")
+	}
+	if reply[0].Error != "" {
+		return nil, fmt.Errorf("Get statistics from interface failed due to Transaction Failed due to an error: %v", reply[0].Error)
+	}
+	if len(reply[0].Rows) == 0 {
+		return nil, nil
+	}
+
+	infStatistics := make(map[string]float64)
+
+	interfaceMap, _ := reply[0].Rows[0]["statistics"]
+	interfaceMapAsSlice := interfaceMap.([]interface{})
+
+	// Here we pick index 1 since index 0 is string "Set"
+	intfStatisticsSet := interfaceMapAsSlice[1]
+	intfStatisticsSetAsSlice := intfStatisticsSet.([]interface{})
+	//statistics := reflect.ValueOf(intfStatisticsSet)
+        for _, vintf := range intfStatisticsSetAsSlice{
+                var key string
+                var value float64
+                for _, sintf := range vintf.([]interface{}) {
+                        sv := reflect.ValueOf(sintf)
+                        if sv.Kind() == reflect.String {
+                                key = sintf.(string)
+                        }
+                        if sv.Kind() == reflect.Float64{
+                                value = sintf.(float64)
+                        }
+                }
+                infStatistics[key] = value
+        }
+
+	return infStatistics, nil
 }
 
 func (client *ovsClient) addInterfaceOnPort(portName string, intf map[string]interface{}) error {
@@ -132,6 +179,7 @@ func (client *ovsClient) interfaceUUIDExists(interfaceUUID string) (bool, error)
 	_, ok := client.interfaceCache[interfaceUUID]
 	return ok, nil
 }
+
 
 func (client *ovsClient) findAllInterfaceUUIDOnPort(portname string) ([]string, error) {
 	condition := libovsdb.NewCondition("name", "==", portname)
